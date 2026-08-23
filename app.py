@@ -1,6 +1,9 @@
 import os
 import streamlit as st
 
+from dotenv import load_dotenv
+
+load_dotenv()
 from rag.vectordb import build_database
 from graph.workflow import run_workflow
 
