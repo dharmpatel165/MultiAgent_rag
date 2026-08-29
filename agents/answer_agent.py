@@ -6,9 +6,9 @@ from google import genai
 from google.genai import types
 
 
-# ---------------------------------------------------------
+# =========================================================
 # LOAD ENVIRONMENT VARIABLES
-# ---------------------------------------------------------
+# =========================================================
 
 load_dotenv()
 
@@ -16,14 +16,13 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_KEY:
     raise ValueError(
-        "GEMINI_API_KEY not found. "
-        "Make sure your .env file contains GEMINI_API_KEY=YOUR_KEY"
+        "GEMINI_API_KEY not found in .env file."
     )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # GEMINI CLIENT
-# ---------------------------------------------------------
+# =========================================================
 
 client = genai.Client(
     api_key=API_KEY,
@@ -33,9 +32,9 @@ client = genai.Client(
 )
 
 
-# ---------------------------------------------------------
+# =========================================================
 # ANSWER AGENT
-# ---------------------------------------------------------
+# =========================================================
 
 class AnswerAgent:
 
@@ -43,12 +42,13 @@ class AnswerAgent:
 
         print("Answer Agent Loaded!")
 
+        # This is the model we already tested successfully
         self.model_name = "gemini-3.6-flash"
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # GENERATE ANSWER
-    # -----------------------------------------------------
+    # =====================================================
 
     def generate_answer(
         self,
@@ -57,29 +57,29 @@ class AnswerAgent:
         conversation_history=None
     ):
 
+        # -------------------------------------------------
+        # Conversation history
+        # -------------------------------------------------
+
         if conversation_history is None:
             conversation_history = []
 
-
-        # -------------------------------------------------
-        # BUILD CONVERSATION HISTORY
-        # -------------------------------------------------
 
         history = ""
 
         if conversation_history:
 
-            history = "\n".join(
+            history = "\n\n".join(
                 [
-                    f"User: {item['question']}\n"
-                    f"Assistant: {item['answer']}"
+                    f"User: {item.get('question', '')}\n"
+                    f"Assistant: {item.get('answer', '')}"
                     for item in conversation_history
                 ]
             )
 
 
         # -------------------------------------------------
-        # BUILD RETRIEVED CONTEXT
+        # Retrieved context
         # -------------------------------------------------
 
         if retrieved_context:
@@ -91,55 +91,56 @@ class AnswerAgent:
 
         else:
 
-            context = "No relevant context was retrieved."
+            context = "No relevant information was retrieved."
 
 
         # -------------------------------------------------
-        # PROMPT
+        # Prompt
         # -------------------------------------------------
 
         prompt = f"""
-You are the Answer Agent of a RAG system.
+You are an intelligent AI assistant inside a
+Retrieval-Augmented Generation (RAG) system.
 
 Your job is to answer the user's question using ONLY
-the information contained in the retrieved context.
+the retrieved context provided below.
 
 Do NOT use outside knowledge.
 
-If the answer cannot be found in the retrieved context,
+If the answer is not present in the retrieved context,
 reply exactly:
 
 I could not find this information in the uploaded documents.
 
-Be concise, accurate, and directly answer the question.
+Keep your answer clear, accurate, and concise.
 
---------------------------------
+========================
 CONVERSATION HISTORY
---------------------------------
+========================
 
 {history}
 
---------------------------------
+========================
 RETRIEVED CONTEXT
---------------------------------
+========================
 
 {context}
 
---------------------------------
+========================
 USER QUESTION
---------------------------------
+========================
 
 {question}
 
---------------------------------
+========================
 ANSWER
---------------------------------
+========================
 """
 
 
-        # -------------------------------------------------
-        # GEMINI REQUEST WITH RETRIES
-        # -------------------------------------------------
+        # =================================================
+        # GEMINI REQUEST
+        # =================================================
 
         max_attempts = 3
 
@@ -152,18 +153,28 @@ ANSWER
                     f"{attempt}/{max_attempts}..."
                 )
 
+
                 response = client.models.generate_content(
+
                     model=self.model_name,
+
                     contents=prompt,
+
                     config=types.GenerateContentConfig(
+
                         temperature=0.2,
-                        max_output_tokens=1000
+
+                        max_output_tokens=1000,
+
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="low"
+                        )
                     )
                 )
 
 
                 # -----------------------------------------
-                # CHECK RESPONSE
+                # Check response
                 # -----------------------------------------
 
                 if response is None:
@@ -201,20 +212,19 @@ ANSWER
 
 
                 # -----------------------------------------
-                # LAST ATTEMPT
+                # Stop after final attempt
                 # -----------------------------------------
 
                 if attempt == max_attempts:
 
                     return (
-                        "Unable to generate an answer right now. "
                         "Gemini is temporarily unavailable. "
-                        "Please try again."
+                        "Please try again in a moment."
                     )
 
 
                 # -----------------------------------------
-                # WAIT BEFORE RETRY
+                # Retry delay
                 # -----------------------------------------
 
                 wait_time = attempt * 2
@@ -226,13 +236,14 @@ ANSWER
                 time.sleep(wait_time)
 
 
-# ---------------------------------------------------------
+# =========================================================
 # DIRECT TERMINAL TEST
-# ---------------------------------------------------------
+# =========================================================
 
 if __name__ == "__main__":
 
     agent = AnswerAgent()
+
 
     while True:
 
@@ -241,12 +252,14 @@ if __name__ == "__main__":
             "(type 'exit' to quit): "
         )
 
+
         if question.lower() == "exit":
+
             break
 
 
         print(
-            "\nEnter Retrieved Context."
+            "\nEnter Retrieved Context"
         )
 
         print(
@@ -261,14 +274,19 @@ if __name__ == "__main__":
 
             line = input()
 
+
             if line == "END":
+
                 break
+
 
             documents.append(line)
 
 
         answer = agent.generate_answer(
+
             question=question,
+
             retrieved_context=documents
         )
 
