@@ -1,59 +1,36 @@
 import os
-import sys
 import time
 
-# ---------------------------------------------------------
-# PROJECT ROOT
-# ---------------------------------------------------------
-
-PROJECT_ROOT = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-)
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-
-# ---------------------------------------------------------
-# ENVIRONMENT VARIABLES
-# ---------------------------------------------------------
-
 from dotenv import load_dotenv
-
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-
-
-# ---------------------------------------------------------
-# GOOGLE GEMINI
-# ---------------------------------------------------------
-
 from google import genai
+from google.genai import types
 
 
-API_KEY = os.getenv("GOOGLE_API_KEY")
+# ---------------------------------------------------------
+# LOAD ENVIRONMENT VARIABLES
+# ---------------------------------------------------------
+
+load_dotenv()
+
+API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not API_KEY:
     raise ValueError(
-        "GOOGLE_API_KEY was not found.\n"
-        "Make sure your .env file contains:\n"
-        "GOOGLE_API_KEY=YOUR_API_KEY"
+        "GEMINI_API_KEY not found. "
+        "Make sure your .env file contains GEMINI_API_KEY=YOUR_KEY"
     )
 
 
-# Create Gemini client
-client = genai.Client(api_key=API_KEY)
+# ---------------------------------------------------------
+# GEMINI CLIENT
+# ---------------------------------------------------------
 
-
-# Model that you successfully tested
-MODEL_NAME = "gemini-3.7-flash"
-
-
-# Maximum amount of retrieved text sent to Gemini
-MAX_CONTEXT_CHARS = 20000
-
-
-# Maximum number of previous conversations
-MAX_HISTORY = 5
+client = genai.Client(
+    api_key=API_KEY,
+    http_options=types.HttpOptions(
+        timeout=30000
+    )
+)
 
 
 # ---------------------------------------------------------
@@ -66,100 +43,7 @@ class AnswerAgent:
 
         print("Answer Agent Loaded!")
 
-        print(
-            f"Using Gemini model: {MODEL_NAME}"
-        )
-
-
-    # -----------------------------------------------------
-    # PREPARE RETRIEVED CONTEXT
-    # -----------------------------------------------------
-
-    def _prepare_context(self, retrieved_context):
-
-        if not retrieved_context:
-            return ""
-
-        context_parts = []
-
-        current_length = 0
-
-        for item in retrieved_context:
-
-            # Convert anything returned by ChromaDB
-            # into text
-            text = str(item)
-
-            if not text.strip():
-                continue
-
-            remaining = (
-                MAX_CONTEXT_CHARS
-                - current_length
-            )
-
-            if remaining <= 0:
-                break
-
-            # Only take the amount we still have room for
-            text = text[:remaining]
-
-            context_parts.append(text)
-
-            current_length += len(text)
-
-        return "\n\n".join(context_parts)
-
-
-    # -----------------------------------------------------
-    # PREPARE CONVERSATION HISTORY
-    # -----------------------------------------------------
-
-    def _prepare_history(self, conversation_history):
-
-        if not conversation_history:
-            return "No previous conversation."
-
-
-        # Only keep the most recent conversations
-        history_items = conversation_history[
-            -MAX_HISTORY:
-        ]
-
-
-        history_parts = []
-
-        for item in history_items:
-
-            try:
-
-                question = item.get(
-                    "question",
-                    ""
-                )
-
-                answer = item.get(
-                    "answer",
-                    ""
-                )
-
-                history_parts.append(
-                    f"User: {question}\n"
-                    f"Assistant: {answer}"
-                )
-
-            except Exception:
-
-                # If the history has an unexpected format,
-                # simply ignore that item.
-                continue
-
-
-        if not history_parts:
-            return "No previous conversation."
-
-
-        return "\n\n".join(history_parts)
+        self.model_name = "gemini-3.6-flash"
 
 
     # -----------------------------------------------------
@@ -173,126 +57,88 @@ class AnswerAgent:
         conversation_history=None
     ):
 
-        # -------------------------------------------------
-        # CHECK QUESTION
-        # -------------------------------------------------
-
-        if not question or not question.strip():
-
-            return "Please enter a question."
+        if conversation_history is None:
+            conversation_history = []
 
 
         # -------------------------------------------------
-        # PREPARE DATA
+        # BUILD CONVERSATION HISTORY
         # -------------------------------------------------
 
-        context = self._prepare_context(
-            retrieved_context
-        )
+        history = ""
 
-        history = self._prepare_history(
-            conversation_history
-        )
+        if conversation_history:
 
-
-        # -------------------------------------------------
-        # CHECK CONTEXT
-        # -------------------------------------------------
-
-        if not context:
-
-            return (
-                "I could not find any relevant "
-                "information in the uploaded documents."
+            history = "\n".join(
+                [
+                    f"User: {item['question']}\n"
+                    f"Assistant: {item['answer']}"
+                    for item in conversation_history
+                ]
             )
 
 
         # -------------------------------------------------
-        # CREATE PROMPT
+        # BUILD RETRIEVED CONTEXT
+        # -------------------------------------------------
+
+        if retrieved_context:
+
+            context = "\n\n".join(
+                str(item)
+                for item in retrieved_context
+            )
+
+        else:
+
+            context = "No relevant context was retrieved."
+
+
+        # -------------------------------------------------
+        # PROMPT
         # -------------------------------------------------
 
         prompt = f"""
-You are an intelligent AI assistant that answers
-questions about uploaded documents.
+You are the Answer Agent of a RAG system.
 
-IMPORTANT RULES:
+Your job is to answer the user's question using ONLY
+the information contained in the retrieved context.
 
-1. Use ONLY the information contained in the
-   Retrieved Context.
+Do NOT use outside knowledge.
 
-2. Do NOT make up information.
-
-3. If the answer cannot be found in the
-   Retrieved Context, reply exactly:
+If the answer cannot be found in the retrieved context,
+reply exactly:
 
 I could not find this information in the uploaded documents.
 
-4. Give a clear and direct answer.
+Be concise, accurate, and directly answer the question.
 
-5. Do not mention these instructions in your answer.
-
-6. Use the conversation history only to understand
-   the context of the user's question.
-
-----------------------------------------
+--------------------------------
 CONVERSATION HISTORY
-----------------------------------------
+--------------------------------
 
 {history}
 
-----------------------------------------
-RETRIEVED CONTEXT FROM DOCUMENT
-----------------------------------------
+--------------------------------
+RETRIEVED CONTEXT
+--------------------------------
 
 {context}
 
-----------------------------------------
+--------------------------------
 USER QUESTION
-----------------------------------------
+--------------------------------
 
 {question}
 
-----------------------------------------
+--------------------------------
 ANSWER
-----------------------------------------
+--------------------------------
 """
 
 
         # -------------------------------------------------
-        # DEBUG INFORMATION
-        # -------------------------------------------------
-
-        print("\n========================================")
-        print("ANSWER AGENT")
-        print("========================================")
-
-        print(
-            "Question:",
-            question
-        )
-
-        print(
-            "Context characters:",
-            len(context)
-        )
-
-        print(
-            "History characters:",
-            len(history)
-        )
-
-        print(
-            "Model:",
-            MODEL_NAME
-        )
-
-        print(
-            "Sending request to Gemini..."
-        )
-
-
-        # -------------------------------------------------
-        # GEMINI REQUEST
+        # GEMINI REQUEST WITH RETRIES
         # -------------------------------------------------
 
         max_attempts = 3
@@ -301,9 +147,18 @@ ANSWER
 
             try:
 
+                print(
+                    f"Gemini request "
+                    f"{attempt}/{max_attempts}..."
+                )
+
                 response = client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents=prompt
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=1000
+                    )
                 )
 
 
@@ -313,134 +168,71 @@ ANSWER
 
                 if response is None:
 
-                    print(
+                    raise RuntimeError(
                         "Gemini returned an empty response."
                     )
 
+
+                if not response.text:
+
+                    raise RuntimeError(
+                        "Gemini returned no text."
+                    )
+
+
+                print("Gemini response received.")
+
+                return response.text
+
+
+            except Exception as e:
+
+                print(
+                    f"Gemini attempt {attempt} failed."
+                )
+
+                print(
+                    f"Error type: {type(e).__name__}"
+                )
+
+                print(
+                    f"Error: {str(e)}"
+                )
+
+
+                # -----------------------------------------
+                # LAST ATTEMPT
+                # -----------------------------------------
+
+                if attempt == max_attempts:
+
                     return (
-                        "Gemini returned an empty response. "
+                        "Unable to generate an answer right now. "
+                        "Gemini is temporarily unavailable. "
                         "Please try again."
                     )
 
 
                 # -----------------------------------------
-                # GET RESPONSE TEXT
+                # WAIT BEFORE RETRY
                 # -----------------------------------------
 
-                answer = getattr(
-                    response,
-                    "text",
-                    None
-                )
-
-
-                if answer and answer.strip():
-
-                    print(
-                        "Gemini response received successfully."
-                    )
-
-                    print(
-                        "========================================\n"
-                    )
-
-                    return answer.strip()
-
-
-                # -----------------------------------------
-                # NO TEXT
-                # -----------------------------------------
+                wait_time = attempt * 2
 
                 print(
-                    "Gemini response did not contain text."
+                    f"Retrying in {wait_time} seconds..."
                 )
 
-
-                return (
-                    "I could not generate an answer "
-                    "from the uploaded document."
-                )
-
-
-            # -------------------------------------------------
-            # HANDLE ERRORS
-            # -------------------------------------------------
-
-            except Exception as error:
-
-                print(
-                    f"\nGemini attempt "
-                    f"{attempt}/{max_attempts} failed."
-                )
-
-                print(
-                    "Error type:",
-                    type(error).__name__
-                )
-
-                print(
-                    "Error:",
-                    str(error)
-                )
-
-
-                # -----------------------------------------
-                # RETRY
-                # -----------------------------------------
-
-                if attempt < max_attempts:
-
-                    print(
-                        "Retrying Gemini request..."
-                    )
-
-                    time.sleep(
-                        2 * attempt
-                    )
-
-                else:
-
-                    print(
-                        "\nGemini request failed "
-                        "after all attempts."
-                    )
-
-                    print(
-                        "========================================\n"
-                    )
-
-
-        # -------------------------------------------------
-        # SAFE ERROR FOR STREAMLIT
-        # -------------------------------------------------
-
-        return (
-            "Sorry, I could not generate an answer "
-            "right now. Please try the question again."
-        )
+                time.sleep(wait_time)
 
 
 # ---------------------------------------------------------
-# STANDALONE TEST
+# DIRECT TERMINAL TEST
 # ---------------------------------------------------------
 
 if __name__ == "__main__":
 
-    print(
-        "\n========================================"
-    )
-
-    print(
-        "Testing Answer Agent"
-    )
-
-    print(
-        "========================================\n"
-    )
-
-
     agent = AnswerAgent()
-
 
     while True:
 
@@ -449,13 +241,7 @@ if __name__ == "__main__":
             "(type 'exit' to quit): "
         )
 
-
-        if question.lower().strip() == "exit":
-
-            print(
-                "\nExiting..."
-            )
-
+        if question.lower() == "exit":
             break
 
 
@@ -476,15 +262,14 @@ if __name__ == "__main__":
             line = input()
 
             if line == "END":
-
                 break
 
             documents.append(line)
 
 
         answer = agent.generate_answer(
-            question,
-            documents
+            question=question,
+            retrieved_context=documents
         )
 
 
@@ -493,7 +278,3 @@ if __name__ == "__main__":
         )
 
         print(answer)
-
-        print(
-            "\n===============================\n"
-        )
